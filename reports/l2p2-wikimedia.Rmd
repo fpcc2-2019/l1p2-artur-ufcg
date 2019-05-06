@@ -1,0 +1,385 @@
+---
+title: | 
+  | Fundamentos de Pesquisa em Ciência da Computação 2
+  |
+  | L2P2: Uma análise bem maior
+  | Artur Alves de Farias
+  |
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(here)
+library(lubridate)
+theme_set(theme_bw())
+```
+
+**Objetivo:** Usaremos um problema de exploração de dados que a Wikimedia Foundation usou em 2016 para recrutar pessoas para trabalhar no departamento de descoberta deles. Sua missão é seguir as instruções colocadas na tarefa original, respondendo as 4 perguntas que são colocadas lá.
+
+## Preparação dos dados
+
+Os dados crus oriundos da Wikimedia Foundation foram lidos previamente pelo próprio professor e disponibilizado no arquivo **data/search_data.csv**.
+
+Estes dados já estão agrupados pela sessões. Deste modo, iremos ler estes dados e atribuir à variável **searches**.
+
+```{r, message=FALSE, warning=FALSE}
+searches = read_csv("../data/search_data.csv")
+
+glimpse(searches)
+```
+
+As variáveis encontram-se agrupandas por **sessão** e **busca**. Algumas variáveis importantes:
+
+| Variável                | Descrição                                                    | Tipo    |
+|-------------------------|--------------------------------------------------------------|---------|
+| session_length          | Duração da sessão.                                           | Métrica |
+| session_start_timestamp | Data e hora de início da sessão.                             | Métrica |
+| group                   | Grupo de usuários.                                           | Nominal |
+| results                 | Número de resultados retornados na busca.                    | Métrica |
+| num_clicks              | Número de cliques realizados  em um dos resultados da busca. | Métrica |
+| first_click             | Indica em qual resultado o primeiro clique ocorreu.          | Métrica |
+
+Por fim, vamos adicionar uma variável referente apenas à data, ignorando o horário. Esta variável se chamará **date**.
+
+```{r, message=FALSE}
+searches = searches %>%
+  mutate(date = date(ymd_hms(session_start_timestamp)))
+```
+
+| Variável                | Descrição                                                    | Tipo    |
+|-------------------------|--------------------------------------------------------------|---------|
+| date                    | Data da sessão.                                              | Métrica |
+
+## 1. Qual a taxa de clique geral diária? Como ela varia entre os grupos?
+
+Primeiramente, temos que entender o conceito de **taxa de cliques**. Segundo a Wikimedia, taxa de cliques é a proporção de **sessões de buscas** onde o usuário **clicou** em um dos resultados **exibidos**.
+
+Analisando os dados, vemos que há pesquisas que **não** obtiveram resultados, ou seja, nenhuma possibilidade foi exibida. Ligando esta informação à definição de taxa de cliques, podemos concluir que as consultas que não apresentaram resultados devem ser **desconsideradas** no cálculo da taxa de cliques.
+
+Sendo assim, para as análises deste item 1, as buscas serão filtrados deste modo:
+
+```{r, message=FALSE}
+searches_with_results = searches %>% 
+    filter(results > 0)
+```
+
+Também foi detectado que alguns registros com incosistências nos dados, como os registros que têm clique mas não tem indicação de qual resultado o usuário clicou. Ou seja, não é possível confiar nestes dados. Deste modo, iremos excluir estes registros da análise:
+
+```{r, message=FALSE}
+searches_with_results = searches_with_results %>% 
+    filter(!(num_clicks > 0 && (is.na(first_click) | first_click <= results)))
+```
+
+## 1.1 Qual a taxa de cliques geral diária?
+
+Para o cálculo de taxa de cliques, usaremos a variável **num_click** e **date**. Para suas perguntas derivadas a variável **group**.
+
+| Variável                | Descrição                                                    | Tipo    |
+|-------------------------|--------------------------------------------------------------|---------|
+| num_clicks              | Número de cliques realizados  em um dos resultados da busca. | Métrica |
+| date                    | Data da sessão.                                              | Métrica |
+| group                   | Grupo de usuários.                                           | Nominal |
+
+Antes de realizarmos os cálculos, é sempre importante verificar como estão os dados e como é a distribuição das variáveis a serem a analisadas.
+
+```{r}
+searches_with_results %>%
+    ggplot(aes(x = "", y = num_clicks)) +
+    geom_jitter(alpha = 0.2, colour = "blue") +
+    labs(x = "Sessão", y = "Número de Cliques")
+```
+
+Podemos ver uma gigante concentração entre os valores **0** e o **10**, mas muito mais próximo do **0**. Deste modo, assumimos que os usuários clicam **poucas vezes** para cada **sessão de busca**.
+
+Mas em que proporção? 
+
+Neste ponto devemos ter **cuidado**, pois a taxa se refere à quando uma sessão **tem** resultado e **é** clicado, e **não quantas vezes** foram os resultados foram clicados. 
+
+Deste modo, vamos gerar uma variável nova e correta para esta análise: **has_click**. Ela será derivada do número de cliques, ou seja, quando o número de cliques for maior que zero, esta variável assume o valor de **verdadeiro**.
+
+| Variável            | Descrição                                                        | Tipo    |
+|---------------------|------------------------------------------------------------------|---------|
+| has_click           | Indica se naquela sessão o usuário clicou em um dos resultados.  | Métrica |
+
+Analisando os dados desta nova variável, temos:
+
+```{r}
+searches_with_results %>%
+    mutate(has_click = num_clicks > 0) %>%
+    group_by(has_click) %>%
+    summarise(
+        total = n()
+    ) %>%
+    ggplot(aes(x = has_click, y = total)) +
+    geom_bar(stat="identity") + 
+    labs(x = "Teve Clique", y = "Total")
+```
+
+Pelo gráfico de barras, dá a impressão que a quantidade de sessões que houve pelo menos um clique do usuário é em torno de um terço da quantidade que não houve.
+
+Agora, iremos calcular a **média** de sessões que tiveram cliques por cada dia. Para isso, somaremos para cada dia, o número de sessões que tiveram cliques e dividiremos pelos número de sessões.
+
+```{r}
+clicks_by_date = searches_with_results %>%
+    mutate(has_click = num_clicks > 0) %>%
+    group_by("Data" = date) %>%
+    summarise(
+        "Taxa" = mean(has_click)
+    )
+
+clicks_by_date
+
+```
+
+Gráfico:
+
+```{r}
+clicks_by_date %>% 
+    ggplot(aes(x = Data, y = Taxa)) +
+    geom_line(colour = "blue") +
+    ylim(0.25,0.35)
+
+```
+
+É possível observar que a cada dia as buscas que apresentam resultados tem uma taxa de cliques variando entre **29% a 30%**. Agora, em cima destas **médias diárias**, vamos calcular a média **geral diária**. Iremos então, calcular a **média das médias**, conforme a seguir:
+
+```{r}
+clicks_by_date %>%
+    summarise(
+        "Taxa" = mean(Taxa)
+    )
+```
+
+Por fim, respondendo a **pergunta 1.1**, temos que a taxa de cliques é de aproximadamente **29,9%**. Ou seja, em **29,9%** das vezes que foi **apresentado** resultados aos usuários, eles clicaram em pelo menos um dos resultados.
+
+## 1.2 Como ela varia entre os grupos?
+
+Para esta pergunta sobre a variação entre os grupos, vamos analisar pelo gráfico de barras a diferença entre os grupos.
+
+```{r}
+searches_with_results %>%
+    mutate(has_click = num_clicks > 0) %>%
+    group_by(group, has_click) %>%
+    summarise(
+        total = n()
+    ) %>%
+    ggplot(aes(x = has_click, y = total, fill=group)) +
+    geom_bar(stat="identity", position=position_dodge()) + 
+    labs(x = "Teve Clique", y = "Total", fill = "Grupo")
+```
+
+Vemos que o grupo "a" não só tem **mais sessões** presentes nos dados como também apresenta uma **diferença menor** entre sessões com e sem clique, do que o grupo "b".
+
+Calculando em valores absolutos, utilizaremos a **média** agrupadas pelos grupos "a" e "b".
+
+```{r}
+searches_with_results %>%
+    mutate(has_click = num_clicks > 0) %>%
+    group_by("Grupo" = group) %>%
+    summarise(
+        "Média" = mean(has_click)
+    )
+```
+
+Respondendo a **pergunta 1.2**, temos que o grupo "a" apresenta uma média **superior** perto de **5 pontos percentuais** à média geral, enquanto o grupo "b" apresenta uma média **inferior** próxima de **10 pontos percentuais**.
+
+## 2. Quais resultados as pessoas tendem a tentar primeiro? Como ela muda dia-a-dia?
+
+Há uma variável entre os dados usados que indica qual foi o índice do resultado que o usuário deu o **primeiro clique**. Usaremos esta variável junto da variável que se refere à **data** para responder às duas perguntas.
+
+| Variável                | Descrição                                                    | Tipo    |
+|-------------------------|--------------------------------------------------------------|---------|
+| first_click             | Indica em qual resultado o primeiro clique ocorreu.          | Métrica |
+| date                    | Data da sessão.                                              | Métrica |
+
+
+```{r}
+first_clicks_searches = searches %>%
+    ungroup() %>%
+    filter(!is.na(first_click)) %>%
+    group_by(first_click)
+
+first_clicks_searches %>%
+    group_by("Primeiro Clique" = first_click) %>%
+    summarise(
+        "Total" = n()
+    )
+
+```
+
+Com uma análise prévia dos dados, vemos que após o índice 20, nenhum dos resultados apresenta mais de **10 cliques**, o que gera uma desproporcionalidade na visualização dos gráficos. 
+
+```{r, warning=FALSE}
+
+first_clicks_searches %>%
+    ggplot(aes(x = first_click)) +
+    geom_histogram() +
+    labs(x = "Índice Primeiro Clique", y = "Total Cliques")
+
+```
+
+Deste modo, iremos **restringir** os dados para os índices antes do 20.
+
+## 2.1 Quais resultados as pessoas tendem a tentar primeiro?
+
+Agora gerando as mesmas análises dos dados, porém mais restritas, temos:
+
+```{r, warning=FALSE}
+
+first_clicks_searches_restricted = first_clicks_searches %>%
+    filter(first_click < 20)
+
+ first_clicks_searches_restricted %>%
+    ggplot(aes(x = first_click)) +
+    geom_histogram(binwidth = 1, colour = "red", fill = "red") +
+    labs(x = "Índice Primeiro Clique", y = "Total Cliques")
+
+```
+
+Como a pergunta se refere a quais **resultados** as pessoas tendem a tentar primeiro, devemos analisar não só que o **primeiro índice** é disparadamente o mais tentado, como também as demais tentativas tendem a ser **próximas** do primeiro índice.
+
+## 2.2 Como ela muda dia-a-dia?
+
+Para esta pergunta, vamos agrupar os dados não só pelo primeiro clique como também pela **data**. 
+
+```{r}
+first_clicks_searches_restricted %>%
+    group_by("Data" = date, "Primeiro Clique" = first_click) %>%
+    summarise(
+        "Total" = n()
+    )
+```
+
+Com os dados agrupados, vimos que **não há** uma grande quantidade de datas disponíveis nos dados, ou seja, será possível exibi-los separando-os em gráficos e verificar se o **comportamento** de cada dia é semelhante ou não.
+
+```{r}
+first_clicks_searches_restricted %>%
+    group_by(date, first_click) %>%
+    ggplot(aes(x = first_click)) +
+    facet_wrap(~date, scales = "free_y") +
+    geom_histogram(binwidth = 1, colour = "red", fill = "red") +
+    labs(x = "Índice Primeiro Clique", y = "Total Cliques")
+```
+
+Podemos então, afirmar que independente do dia, o comportamento dos usuários é **semelhante**, pois em todos os gráficos, os usuários tendem a tentar os primeiros resultados em uma frequência bem maior. A medida que um resultado é exibido **posteriormente**, **menor a chance** de o usuário clicá-lo na primeira tentativa.
+
+## 3. Qual é a nossa taxa com resultados zerados geral diária? Como ela varia entre os grupos?
+
+A Wikimedia diz que *zero results*, ou seja, resultados zerados é quando a busca retorna 0 resultados. A proporção deste é quantas buscas obtiveram 0 resultados dentro de todas as buscas realizadas.
+
+Assim iremos usar as variáveis **results** e **date** para responder à primeira pergunta. Para a segunda pergunta usaremos também a variável **group**.
+
+| Variável                | Descrição                                                    | Tipo    |
+|-------------------------|--------------------------------------------------------------|---------|
+| date                    | Data da sessão.                                              | Métrica |
+| group                   | Grupo de usuários.                                           | Nominal |
+| results                 | Número de resultados retornados na busca.                    | Métrica |
+
+## 3.1 Qual é a nossa taxa com resultados zerados geral diária?
+
+Agrupando por **data** e calculando a **média** de buscas sem resultados, temos:
+
+```{r}
+searches %>%
+    group_by(date) %>%
+    summarise(
+        mean = mean(results == 0)
+    ) %>%
+    ggplot(aes(x = date, y = mean, fill = date)) + 
+    geom_bar(stat="identity", position=position_dodge()) +
+    ylim(0, 0.3) + 
+    labs(x = "Data", y = "Média de Resultados Zerados") +
+    guides(fill=FALSE)
+    
+```
+
+É possível notar pelo gráfico que diariamente a taxa de resultados zerados **não varia muito** e se mantém próxima dos **20%**.
+
+Sumarizando esta análise em um valor que represente o valor geral, conforme especificado na pergunta, temos: 
+
+```{r}
+searches %>%
+    summarise(
+        "Média" = mean(results == 0)
+    )
+    
+```
+
+Após calcular a **média geral**, temos que **18,4%** das vezes, a busca retorna 0 resultados, o que condiz com a análise do gráfico anteriormente onde os resultados variaram pouco e próximos aos 20%.
+
+## 3.2 Como ela varia entre os grupos?
+
+Para analisarmos a variação entre os grupos, utilizaremos a variável **group** no agrupamento. De modo que temos:
+
+```{r}
+searches %>%
+    group_by(date, group) %>%
+    summarise(
+        mean = mean(results == 0)
+    ) %>%
+    ggplot(aes(x = date, y = mean, fill = group)) + 
+    geom_bar(stat="identity", position=position_dodge()) +
+    ylim(0, 0.3) + 
+    labs(x = "Data", y = "Média de Resultados Zerados", fill = "Grupo")
+```
+
+Se analisarmos separadamente por data, é possível ver que não há um comportamento padrão para os grupos. Por exemplo, vemos que em algumas datas, o grupo "a" tem mais resultados zerados que o grupo "b". Já em outras datas, o cenário se inverte. Aparentemente, o **grupo** não tem grande força na relação com **resultados zerados**.
+
+Se desejarmos sumarizar esta avaliação em um único resultado, fazemos:
+
+```{r}
+searches %>%
+    group_by("Grupo" = group) %>%
+    summarise(
+        "Média" = mean(results == 0)
+    )
+```
+
+Por fim, vemos que de maneira **geral** o grupo "a" tem em média **18,3%** de resultados zerados enquanto o grupo "b" tem em média **18,6%** de resultados zerados.
+
+## 4. Considere a duração da sessão aproximadamente o tempo entre o primeiro evento e o último evento da sessão. Escolha uma variável do conjunto dos dados e descreva seu relacionamento com a duração da sessão. Visualize a relação.
+
+Escolheremos a variável **num_clicks** para vermos a relação entre ela e a **duração da sessão**, ou seja, veremos se os usuários clicam mais vezes por ficarem em sessões maiores.
+
+| Variável                | Descrição                                                    | Tipo    |
+|-------------------------|--------------------------------------------------------------|---------|
+| session_length          | Duração da sessão.                                           | Métrica |
+| num_clicks              | Número de cliques realizados  em um dos resultados da busca. | Métrica |
+
+```{r}
+searches %>%
+    group_by("Sessão" = session_id) %>%
+    summarise(
+        "Duração" = sum(session_length)
+    )
+    
+```
+
+Analisando os dados do tamanho da sessão, vemos que várias sessões tem tempo de **0 ms**. Isso significa que várias sessões tem o mesmo *timestamp* para o ínicio e o fim, **muito provavelmente**, por terem apenas 1 evento.
+
+```{r, warning=FALSE}
+
+searches %>%
+    ggplot(aes(x = session_length, y = num_clicks)) +
+    geom_point() +
+    geom_jitter(alpha = 0.25, colour = "blue") +
+    scale_x_log10() +
+    labs(x = "Tamanho da Sessão", y = "Número de Cliques")
+```
+
+Pelo gráfico, as variáveis **não** apresentam forte relação. Aparentemente, ele possui de maneira geral, um comportamento mais linear, e bem próximo do valor 0 no eixo vertical. Portanto, o método de correlação mais adequado, ao meu ver, é o método de Pearson.
+
+```{r}
+
+pearson <- cor(searches$session_length, searches$num_clicks,  method = "pearson")
+
+```
+
+| Método                  | Valor            |
+|-------------------------|------------------|
+| Pearson                 | `r pearson`      |
+
+Por fim, concluímos através do métodos de Pearson que realmente **não há** uma forte ligação entre as variáveis, pois seu valor está mais próximo de **ZERO** do que de **UM**.
